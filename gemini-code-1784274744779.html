@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mô Hình Thí Nghiệm Truyền Nhiệt Đối Lưu 3D</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0a0e14; font-family: 'Segoe UI', Tahoma, sans-serif; user-select: none; }
+        
+        /* Bảng điều khiển */
+        #ui-panel {
+            position: absolute; top: 15px; left: 15px; width: 340px;
+            background: rgba(10, 18, 30, 0.9); padding: 20px; border-radius: 10px;
+            border: 1px solid #00ffff; box-shadow: 0 0 15px rgba(0, 255, 255, 0.2);
+            color: #ffffff; z-index: 10;
+        }
+        h3 { margin: 0 0 15px 0; font-size: 18px; color: #00ffff; text-transform: uppercase; letter-spacing: 1px; }
+        
+        .status-box {
+            background: #050a10; padding: 12px; border-radius: 6px; border: 1px solid #005577;
+            margin-bottom: 15px; text-align: center;
+        }
+        .status-title { font-size: 12px; color: #a0c0d0; margin-bottom: 5px; }
+        .status-val { font-size: 24px; font-weight: bold; color: #ff5500; text-shadow: 0 0 8px rgba(255, 85, 0, 0.5); }
+        
+        .control-group { margin-bottom: 15px; }
+        label { display: block; font-size: 13px; color: #a0c0d0; margin-bottom: 5px; font-weight: bold; }
+        
+        input[type=range] {
+            width: 100%; -webkit-appearance: none; background: #071018; height: 8px;
+            border-radius: 4px; border: 1px solid #0088aa; outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+            background: #00ffff; cursor: pointer; box-shadow: 0 0 8px #00ffff;
+        }
+        .val-text { float: right; color: #00ffff; }
+
+        .btn-group { display: flex; gap: 10px; margin-top: 15px; }
+        button {
+            flex: 1; padding: 11px; font-size: 14px; font-weight: bold; color: #ffffff;
+            background: linear-gradient(135deg, #005577, #003344); border: 1px solid #00ffff;
+            border-radius: 5px; cursor: pointer; transition: 0.2s;
+        }
+        button:hover { background: linear-gradient(135deg, #0088aa, #005577); box-shadow: 0 0 10px rgba(0,255,255,0.4); }
+        button.paused { background: linear-gradient(135deg, #aa5500, #773300); border-color: #ffaa00; color: #ffaa00; }
+        
+        .legend {
+            display: flex; justify-content: space-between; font-size: 11px; color: #a0c0d0;
+            margin-top: 10px; padding-top: 10px; border-top: 1px dashed #005577;
+        }
+        .legend-item { display: flex; align-items: center; gap: 5px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        
+        .guide { margin-top: 12px; font-size: 11px; color: #7090a0; line-height: 1.4; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+    <div id="ui-panel">
+        <h3>🌀 Thí Nghiệm Đối Lưu</h3>
+        
+        <div class="status-box">
+            <div class="status-title">NHIỆT ĐỘ MÂM NHIỆT (ĐÁY BÌNH)</div>
+            <div id="tempVal" class="status-val">100°C</div>
+        </div>
+
+        <div class="control-group">
+            <label>Nhiệt độ bếp đun: <span id="textTemp" class="val-text">100°C</span></label>
+            <input type="range" id="sliderTemp" min="20" max="200" value="100">
+        </div>
+
+        <div class="control-group">
+            <label>Tốc độ dòng đối lưu: <span id="textSpeed" class="val-text">5x</span></label>
+            <input type="range" id="sliderSpeed" min="1" max="10" value="5">
+        </div>
+
+        <div class="control-group">
+            <label>Số lượng hạt quan sát: <span id="textCount" class="val-text">400 hạt</span></label>
+            <input type="range" id="sliderCount" min="100" max="600" step="50" value="400">
+        </div>
+
+        <div class="btn-group">
+            <button id="btnPlay">⏸ Tạm Dừng</button>
+            <button id="btnReset">🔄 Làm Mới</button>
+        </div>
+
+        <div class="legend">
+            <div class="legend-item"><span class="dot" style="background: #ff0000;"></span>Nóng (Nổi lên)</div>
+            <div class="legend-item"><span class="dot" style="background: #00ff00;"></span>Ấm</div>
+            <div class="legend-item"><span class="dot" style="background: #0066ff;"></span>Lạnh (Chìm xuống)</div>
+        </div>
+
+        <div class="guide">
+            * Quan sát cách dòng nước nóng nhẹ hơn di chuyển lên trên và dòng nước lạnh nặng hơn chìm xuống phía dưới.
+        </div>
+    </div>
+
+    <script>
+        // 1. KHỞI TẠO KHÔNG GIAN 3D
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 24);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.target.set(0, 0, 0);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(10, 15, 10);
+        scene.add(dirLight);
+
+        const grid = new THREE.GridHelper(30, 30, 0x00ffff, 0x112233);
+        grid.position.y = -4.5;
+        scene.add(grid);
+
+        // 2. TẠO BÌNH THỦY TINH & MÂM NHIỆT
+        // Bình thủy tinh (Hình trụ)
+        const beakerGeo = new THREE.CylinderGeometry(4, 4, 8, 32, 1, true);
+        const beakerMat = new THREE.MeshPhongMaterial({
+            color: 0x88ffff, transparent: true, opacity: 0.15, shininess: 100, side: THREE.DoubleSide
+        });
+        const beaker = new THREE.Mesh(beakerGeo, beakerMat);
+        scene.add(beaker);
+
+        // Viền trên và viền dưới của bình cho đẹp
+        const ringGeo = new THREE.TorusGeometry(4, 0.08, 16, 50);
+        ringGeo.rotateX(Math.PI / 2);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+        const topRing = new THREE.Mesh(ringGeo, ringMat);
+        topRing.position.y = 4;
+        scene.add(topRing);
+        const bottomRing = topRing.clone();
+        bottomRing.position.y = -4;
+        scene.add(bottomRing);
+
+        // Mâm nhiệt ở giữa đáy bình
+        const heaterGeo = new THREE.CylinderGeometry(2.2, 2.2, 0.3, 32);
+        const heaterMat = new THREE.MeshPhongMaterial({ color: 0xff3300, emissive: 0x881100 });
+        const heater = new THREE.Mesh(heaterGeo, heaterMat);
+        heater.position.y = -4.15;
+        scene.add(heater);
+
+        // Mặt nước ảo ở trên cùng
+        const waterTopGeo = new THREE.CircleGeometry(3.95, 32);
+        waterTopGeo.rotateX(-Math.PI / 2);
+        const waterTopMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.2 });
+        const waterTop = new THREE.Mesh(waterTopGeo, waterTopMat);
+        waterTop.position.y = 3.9;
+        scene.add(waterTop);
+
+        // 3. THIẾT LẬP HỆ THỐNG HẠT ĐỐI LƯU (PARTICLES)
+        let particleCount = 400;
+        const particles = [];
+        const particleGroup = new THREE.Group();
+        scene.add(particleGroup);
+
+        const sphereGeo = new THREE.SphereGeometry(0.12, 8, 8);
+
+        function createParticles(count) {
+            // Xóa hạt cũ nếu có
+            while (particleGroup.children.length > 0) {
+                particleGroup.remove(particleGroup.children[0]);
+            }
+            particles.length = 0;
+
+            for (let i = 0; i < count; i++) {
+                const mat = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
+                const mesh = new THREE.Mesh(sphereGeo, mat);
+                
+                // Khởi tạo vị trí ngẫu nhiên bên trong bình
+                const r = Math.sqrt(Math.random()) * 3.5;
+                const theta = Math.random() * Math.PI * 2;
+                mesh.position.set(Math.cos(theta) * r, (Math.random() * 7.4) - 3.7, Math.sin(theta) * r);
+                
+                particleGroup.add(mesh);
+
+                particles.push({
+                    mesh: mesh,
+                    x: mesh.position.x,
+                    y: mesh.position.y,
+                    z: mesh.position.z,
+                    vx: 0, vy: 0, vz: 0,
+                    temp: 20 + Math.random() * 20 // Nhiệt độ ban đầu
+                });
+            }
+        }
+
+        createParticles(particleCount);
+
+        // 4. THÔNG SỐ ĐIỀU KHIỂN & VẬT LÝ
+        let heaterTemp = 100;
+        let flowSpeed = 5;
+        let isRunning = true;
+
+        function getThermalColor(temp) {
+            // Mapping nhiệt độ 20°C (Xanh) -> 60°C (Lục) -> 100°C+ (Đỏ/Vàng)
+            const t = Math.max(0, Math.min(1, (temp - 20) / 80));
+            const hue = (1 - t) * 0.66; // 0.66 là màu xanh biển, 0 là màu đỏ
+            return new THREE.Color().setHSL(hue, 1.0, 0.5);
+        }
+
+        function updateHeaterAppearance() {
+            document.getElementById('tempVal').innerText = heaterTemp + "°C";
+            const color = getThermalColor(heaterTemp);
+            heater.material.color = color;
+            heater.material.emissive = color.clone().multiplyScalar(0.5);
+            document.getElementById('tempVal').style.color = color.getStyle();
+        }
+
+        // Sự kiện giao diện
+        document.getElementById('sliderTemp').addEventListener('input', (e) => {
+            heaterTemp = parseInt(e.target.value);
+            document.getElementById('textTemp').innerText = heaterTemp + "°C";
+            updateHeaterAppearance();
+        });
+
+        document.getElementById('sliderSpeed').addEventListener('input', (e) => {
+            flowSpeed = parseInt(e.target.value);
+            document.getElementById('textSpeed').innerText = flowSpeed + "x";
+        });
+
+        document.getElementById('sliderCount').addEventListener('change', (e) => {
+            particleCount = parseInt(e.target.value);
+            document.getElementById('textCount').innerText = particleCount + " hạt";
+            createParticles(particleCount);
+        });
+
+        const btnPlay = document.getElementById('btnPlay');
+        btnPlay.addEventListener('click', () => {
+            isRunning = !isRunning;
+            btnPlay.innerText = isRunning ? "⏸ Tạm Dừng" : "▶ Tiếp Tục";
+            btnPlay.classList.toggle("paused", !isRunning);
+        });
+
+        document.getElementById('btnReset').addEventListener('click', () => {
+            createParticles(particleCount);
+        });
+
+        // 5. VÒNG LẶP VẬT LÝ ĐỐI LƯU (PHYSICS ENGINE)
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (isRunning) {
+                const speedFactor = flowSpeed * 0.0006;
+
+                for (let i = 0; i < particles.length; i++) {
+                    const p = particles[i];
+                    const r = Math.sqrt(p.x * p.x + p.z * p.z);
+
+                    // --- BƯỚC 1: TRAO ĐỔI NHIỆT ---
+                    // Nếu ở gần mâm nhiệt đáy (y < -3.2 và r < 2.2) -> Bị đun nóng
+                    if (p.y < -3.0 && r < 2.2) {
+                        p.temp += (heaterTemp - p.temp) * 0.08;
+                    } else {
+                        // Tỏa nhiệt ra môi trường nước xung quanh (nguội dần về 20°C)
+                        p.temp += (20 - p.temp) * 0.012;
+                    }
+
+                    // --- BƯỚC 2: LỰC ĐẨY ARCHIMEDES (ĐỐI LƯU) ---
+                    // Nhiệt độ cao > 45°C sẽ nổi lên (vy > 0), lạnh hơn sẽ chìm xuống (vy < 0)
+                    const buoyancy = (p.temp - 45) * speedFactor;
+                    p.vy += buoyancy;
+
+                    // --- BƯỚC 3: HƯỚNG DẪN DÒNG CHẢY TẠO VÒNG XOÁY ---
+                    // Khi nổi lên sát mặt nước (y > 2.5), đẩy hạt dạt ra biên thành bình
+                    if (p.y > 2.2 && p.vy > 0) {
+                        p.vx += (p.x / (r + 0.001)) * speedFactor * 15;
+                        p.vz += (p.z / (r + 0.001)) * speedFactor * 15;
+                        p.vy *= 0.9; // Giảm tốc độ lên
+                    }
+
+                    // Khi ở vùng biên ngoài (r > 2.2), dòng nước nguội bị hút chìm xuống
+                    if (r > 2.2) {
+                        p.vy -= speedFactor * 5;
+                    }
+
+                    // Khi chìm xuống sát đáy (y < -3.0), cuốn hạt trở lại trung tâm mâm nhiệt
+                    if (p.y < -3.0) {
+                        p.vx -= (p.x / (r + 0.001)) * speedFactor * 15;
+                        p.vz -= (p.z / (r + 0.001)) * speedFactor * 15;
+                        p.vy *= 0.8;
+                    }
+
+                    // --- BƯỚC 4: CẬP NHẬT VỊ TRÍ & VA CHẠM THÀNH BÌNH ---
+                    p.vx *= 0.95; p.vy *= 0.95; p.vz *= 0.95; // Lực cản độ nhớt
+                    p.x += p.vx; p.y += p.vy; p.z += p.vz;
+
+                    // Giới hạn trong hình trụ (Bán kính max = 3.6)
+                    if (r > 3.6) {
+                        p.x = (p.x / r) * 3.6;
+                        p.z = (p.z / r) * 3.6;
+                        p.vx *= -0.5; p.vz *= -0.5;
+                    }
+                    // Giới hạn đáy và đỉnh bình (-3.8 đến 3.8)
+                    if (p.y < -3.8) { p.y = -3.8; p.vy *= -0.2; }
+                    if (p.y > 3.8) { p.y = 3.8; p.vy *= -0.2; }
+
+                    // Cập nhật lên Mesh 3D và đổi màu theo nhiệt độ
+                    p.mesh.position.set(p.x, p.y, p.z);
+                    p.mesh.material.color = getThermalColor(p.temp);
+                }
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        updateHeaterAppearance();
+        animate();
+    </script>
+</body>
+</html>
